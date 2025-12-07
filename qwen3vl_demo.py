@@ -60,7 +60,7 @@ print("processor loaded")
 # --- Create messages to LLM with images and text ---
 img_dir = r"e:/Projects/Honours/market1501/market-1501-v15.09.15/bounding_box_test"
 img_files = [f for f in os.listdir(img_dir) if f.lower().endswith(".jpg")]
-img_files = img_files[:3]
+img_files = img_files[:5]
 
 print(len(img_files), "images to process.")
 for idx, img_file in enumerate(img_files):
@@ -122,7 +122,7 @@ for idx, img_file in enumerate(img_files):
 
     # --- Embedding Layer (Inside the Model) ---
     # Converts raw inputs (tokens, pixels) into vectors the model can work with
-    with torch.no_grad(): # Disable gradient calc, save mem, speed up computation, since we only want to see hidden states
+    with torch.no_grad():  # Disable gradient calc, save mem, speed up computation, since we only want to see hidden states
         outputs = model(**inputs, output_hidden_states=True)
     print("\n--- Embedding Layer Output ---")
     if hasattr(outputs, "hidden_states"):
@@ -140,6 +140,38 @@ for idx, img_file in enumerate(img_files):
         print("Final hidden state sample:", emb[-1].flatten()[:10].tolist())
     else:
         print("No hidden_states found in model outputs.")
+
+    # --- Get End of Image (EOI) Token ---
+
+    # --- Get <|im_end|> Token and Its Embedding ---
+    im_end_token_str = "<|im_end|>"
+    im_end_token_id = processor.tokenizer.convert_tokens_to_ids(im_end_token_str)
+    print("im_end token string:", im_end_token_str)
+    print("im_end token ID:", im_end_token_id)
+
+    # Find the position of <|im_end|> in the input sequence
+    input_ids = inputs["input_ids"][0]  # shape: [seq_len]
+    im_end_positions = (input_ids == im_end_token_id).nonzero(as_tuple=True)[0]
+    if len(im_end_positions) > 0:
+        im_end_pos = im_end_positions.item()
+        # Get the embedding vector for <|im_end|> token at the embedding layer
+        im_end_embedding = emb[0][0, im_end_pos, :]  # shape: [hidden_dim]
+        print(
+            "im_end embedding vector (embedding layer):", im_end_embedding[:10]
+        )  # print first 10 dims
+        print(
+            "im_end embedding vector (embedding layer) shape:", im_end_embedding.shape
+        )
+        # Get the embedding vector for <|im_end|> token at the final layer
+        im_end_embedding_final = emb[-1][0, im_end_pos, :]
+        print(
+            "im_end embedding vector (final layer):", im_end_embedding_final[:10]
+        )  # print first 10 dims
+        print(
+            "im_end embedding vector (final layer) shape:", im_end_embedding_final.shape
+        )
+    else:
+        print("<|im_end|> token not found in input_ids.")
 
     # --- Generation Output ---
     start_time = time.time()
