@@ -4,14 +4,14 @@ import numpy as np
 from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 from PIL import Image
 
-query = True
+query = False  # Set to False for gallery
 
 # Paths
 if query:
-    output_path = os.path.join(os.getcwd(), "query_im_end_embeddings.npy")
+    output_path = os.path.join(os.getcwd(), "query_im_avg_embeddings.npy")
     img_dir = os.path.join(os.getcwd(), "market1501", "market-1501-v15.09.15", "query")
 else:
-    output_path = os.path.join(os.getcwd(), "gallery_im_end_embeddings.npy")
+    output_path = os.path.join(os.getcwd(), "gallery_im_avg_embeddings.npy")
     img_dir = os.path.join(os.getcwd(), "market1501", "market-1501-v15.09.15", "bounding_box_test")
 print(f"Image directory: {img_dir}")
 
@@ -30,7 +30,7 @@ im_end_token_id = processor.tokenizer.convert_tokens_to_ids(im_end_token_str)
 
 print(f"<|im_end|> token ID: {im_end_token_id}")
 
-# List query images
+# List images
 img_files = [f for f in os.listdir(img_dir) if f.lower().endswith(".jpg")]
 
 print(f"Number of images to process: {len(img_files)}")
@@ -77,15 +77,30 @@ for img_file in img_files:
         outputs = model(**inputs, output_hidden_states=True)
     emb = outputs.hidden_states
     input_ids = inputs["input_ids"][0]
+    # Find all <|im_end|> token positions
     im_end_positions = (input_ids == im_end_token_id).nonzero(as_tuple=True)[0]
-    if len(im_end_positions) > 0:
-        im_end_pos = im_end_positions.item()
-        im_end_embedding = emb[-1][0, im_end_pos, :].to(torch.float32).cpu().numpy()
-        print(f"Embedding shape for {img_file}: {im_end_embedding.shape}")
-        embeddings[img_file] = im_end_embedding
+    # Find all image token positions (token id == processor.tokenizer.image_token_id)
+    # Use only <|im_end|> token for each image
+    im_end_positions = (input_ids == im_end_token_id).nonzero(as_tuple=True)[0]
+    num_im_end_tokens = len(im_end_positions)
+    num_layers = len(emb)
+    print(f"Number of layers: {num_layers}")
+    if num_im_end_tokens == 1:
+        layer_embeddings = []
+        for layer in range(num_layers):
+            # Take the <|im_end|> token embedding at this layer
+            layer_emb = emb[layer][0, im_end_positions[0], :].to(torch.float32).cpu().numpy()  # (hidden_dim,)
+            layer_embeddings.append(layer_emb)
+        layer_embeddings = np.stack(layer_embeddings, axis=0)  # (num_layers, hidden_dim)
+        # Now average across all layers to get a single embedding
+        final_embedding = layer_embeddings.mean(axis=0)  # (hidden_dim,)
+        print(f"Final averaged embedding shape for {img_file}: {final_embedding.shape}")
+        embeddings[img_file] = final_embedding
         np.save(output_path, embeddings)
         print(
-            f"Extracted and saved embedding for {img_file}, shape: {im_end_embedding.shape}. Total: {len(embeddings)}"
+            f"Extracted and saved final averaged embedding for {img_file}, shape: {final_embedding.shape}. Total: {len(embeddings)}"
         )
+    elif num_im_end_tokens == 0:
+        print(f"No <|im_end|> tokens found in {img_file}")
     else:
-        print(f"<|im_end|> token not found in {img_file}")
+        print(f"Warning: More than one <|im_end|> token found in {img_file}. Skipping.")
